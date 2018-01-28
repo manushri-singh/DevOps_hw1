@@ -1,0 +1,322 @@
+## Prerequisites
+---
+- hosts: nodes
+  remote_user: ubuntu
+  become: yes
+
+  gather_facts: False
+  pre_tasks:
+    - name: 'install python2'
+      raw: sudo apt-get -y install python-simplejson
+
+- hosts: nodes
+
+  vars: 
+    packages:
+      - build-essential
+      - dkms
+      - unzip
+      - wget
+      - python-pexpect
+
+    packages1:
+      - apache2 
+      - php 
+      - php-mysql 
+      - libapache2-mod-php 
+      - php-soap 
+      - php-xml
+
+    remote_username: ubuntu
+    remote_password: passwdnew
+    remote_image: ubuntu/precise32
+    remote_dir: /boxes/nodeF
+
+  tasks: 
+
+  - name: Update apt packages
+    become: true
+    apt:
+      update_cache: yes
+
+  - name: Install aptitude
+    apt: pkg=aptitude state=present
+    become: true
+
+  - name: Upgrade apt packages
+    apt: upgrade=yes
+  
+  - name: Dist-upgrade apt packages
+    become: true
+    apt:
+      upgrade: dist
+  
+  - name: Install the packages "build-essential dkms unzip wget"
+    apt: pkg={{ item }} state=present
+    become: yes
+    with_items: "{{packages}}"
+  
+  ##- name: Rebooting the server
+  ##  command: shutdown -r now removes=/var/run/reboot-required
+  ##  sudo: yes
+  ##  async: 0
+  ##  poll: 0
+  ##  ignore_errors: true
+  ##  register: restarted
+  ##
+  ##- name: Waiting for Server
+  ##  local_action: wait_for host=localhost port=2200 delay=15 state=started
+  ##  sudo: no
+  ##  when: restarted.changed
+  
+  
+  ## Install Oracle VirtualBox on Ubuntu 16.04 LTS server
+  
+  - name: Add url to the sources.list file
+    lineinfile:
+      path: /etc/apt/sources.list
+      line: 'deb http://download.virtualbox.org/virtualbox/debian xenial contrib'
+  
+  - name: Add the key to download virtualbox
+    apt_key:
+      url: "https://www.virtualbox.org/download/oracle_vbox_2016.asc"
+      state: present
+  
+  - name: Update apt packages
+    become: true
+    apt:
+      update_cache: yes
+  
+  - name: Install the version '5.0' of package "virtualbox"
+    apt:
+      name: virtualbox-5.0
+      state: present
+  
+  ## Adding users to VirtualBox group
+  - name: Add user to the vboxusers group
+    user:
+      name: remote_username
+      groups: vboxusers
+      append: yes
+  
+  - name: Check if vboxdrv is present in the kernel
+    modprobe:
+      name: vboxdrv
+      state: present
+  
+#  - sysctl:
+#      name: vboxdrv
+#      value: active
+#      sysctl_set: yes
+#      state: present
+  
+#  - name: update kernel settings
+#    become: yes
+#    sysctl:
+#      name: vboxdrv
+#      value: active
+#      sysctl_set: yes
+#      state: present
+      
+      
+  ## Install VirtualBox Extension pack
+  
+  - name: Check if extension pack is already installed
+    shell: "VBoxManage list extpacks"
+    register: extpack_list
+  
+  - name: Download VirtualBox extension pack if not installed
+    get_url: 
+      url: http://download.virtualbox.org/virtualbox/5.0.24/Oracle_VM_VirtualBox_Extension_Pack-5.0.24-108355.vbox-extpack
+      dest: ~/.
+    when: 'extpack_list.stdout == "Extension Packs: 0"'
+    become: yes
+
+  - name: Install VirtualBox ext pack if not installed
+    expect:
+      command: "VBoxManage extpack install Oracle_VM_VirtualBox_Extension_Pack-5.0.24-108355.vbox-extpack"
+      echo: yes
+      responses:
+        "Do you agree to these license terms and conditions (y/n)?": "y"
+    when: 'extpack_list.stdout == "Extension Packs: 0"'
+    become: yes
+    args:
+      chdir: ~/.
+
+## Install phpVirtualBox in Ubuntu 16.04 LTS
+
+  - name: Change Username and Password for user ubuntu
+    expect:
+      command: "passwd ubuntu"
+      echo: yes
+      responses:
+        (?i)password: '{{ remote_password }}'
+    become: yes
+
+  - name: Install the packages "apache2 php php-mysql libapache2-mod-php php-soap php-xml"
+    apt: pkg={{ item }} state=present
+    become: yes
+    with_items: "{{packages1}}"
+  
+  - name: Download the phpVirtualBox
+    get_url:
+      url: "https://sourceforge.net/projects/phpvirtualbox/files/phpvirtualbox-5.0-5.zip"
+      dest: /tmp/phpvirtualbox-5.0-5.zip
+  
+  - name: Unzip phpVirtualBox
+    unarchive:
+      src: /tmp/phpvirtualbox-5.0-5.zip
+      dest: /tmp/
+      remote_src: True
+
+  - name: stat phpVirtualBox folder in /tmp/
+    stat: path=/tmp/phpvirtualbox-5.0-5
+    register: foo_stat
+  
+  - name: stat phpVirtualBox folder /var/
+    stat: path=/var/www/html/phpvirtualbox
+    register: phpVB_stat
+  
+  - name: Move phpVirtualBox folder from /tmp/ to /var/
+    command: mv /tmp/phpvirtualbox-5.0-5 /var/www/html/phpvirtualbox
+    when: foo_stat.stat.exists==True and phpVB_stat.stat.exists==False
+  
+  - name: Change phpvirtualbox folder permissions
+    file:
+      path: /var/www/html/phpvirtualbox/
+      mode: 0777
+  
+  - name: Copy config.php-example file to config.php
+    copy: remote_src=True src=/var/www/html/phpvirtualbox/config.php-example dest=/var/www/html/phpvirtualbox/config.php
+
+  - name: Comment out username in config.php
+    replace:
+      dest: /var/www/html/phpvirtualbox/config.php
+      regexp: '^var \$username = '
+      replace: '#var $username = '
+
+  - name: Comment out password in config.php
+    replace:
+      dest: /var/www/html/phpvirtualbox/config.php
+      regexp: '^var \$password = '
+      replace: '#var $password = '
+
+#        var $password = 'bdb5e2b09bbcf05dc6ddfe67';
+  - name: insert/update config.php configuration for user ubuntu and password
+    blockinfile:
+      path: /var/www/html/phpvirtualbox/config.php
+      insertafter: "class phpVBoxConfig {"
+      block: |
+
+        var $username = '{{remote_username}}';
+        var $password = '{{remote_password}}';
+
+  - name: Check if file /etc/default/virtualbox exists
+    stat: path=/etc/default/virtualbox
+    register: virtualbox_stat
+
+  - name: Remove /etc/default/virtualbox if it exists
+    file: path=/etc/default/virtualbox state=absent recurse=no
+    become: true
+    when: virtualbox_stat.stat.exists==True
+
+  - name: Create a file /etc/default/virtualbox with username as content
+    copy:
+      content: "VBOXWEB_USER={{ remote_username }};"
+      dest: /etc/default/virtualbox
+      force: no
+      owner: root
+    become: true
+
+  - name: restart service vboxweb-service
+    service:
+      state: restarted
+      name: vboxweb-service
+  
+  - name: restart service vboxdrv
+    service:
+      state: restarted
+      name: vboxdrv
+  
+  - name: restart service apache2
+    service:
+      state: restarted
+      name: apache2
+  
+  ## Install Vagrant on Ubuntu 16.04 LTS server
+
+  - name: Update apt packages
+    become: true
+    apt:
+      update_cache: yes
+
+  - name: Install the package "vagrant"
+    become: true
+    apt:
+      name: vagrant
+      state: present
+      force: yes
+
+
+## Create Directory for vm
+  - name: stat VagrantFile
+    stat: 
+      path: '{{ remote_dir }}/Vagrantfile'
+    register: vagrantfile_stat
+
+  - name: Stop and Delete any existing vagrant VMs in the folder
+    shell: vagrant destroy -f
+    become: true
+    args:
+      chdir: '{{ remote_dir }}'
+    when: vagrantfile_stat.stat.exists==True
+
+  - name: Remove any Vagrantfile that is present in the folder
+    file:
+      path: '{{ remote_dir }}/Vagrantfile'
+      state: absent
+      recurse: no
+    become: true
+    when: vagrantfile_stat.stat.exists==True
+
+  - name: Creates directory if it does not exist
+    become: true
+    file: 
+      path: '{{ remote_dir }}'
+      state: directory
+  
+  - name: Running vagrant init in the directory
+    shell: vagrant init {{remote_image}}
+    become: true
+    args:
+      chdir: '{{ remote_dir }}'
+
+  - name: insert/update Vagrantfile configuration
+    become: true
+    blockinfile:
+      path: '{{ remote_dir }}/Vagrantfile'
+      insertbefore: "end"
+      block: |
+     
+        config.vm.network 'private_network', ip: '10.0.42.51'
+        config.vm.provider :virtualbox do |vb|
+          vb.cpus = 1
+          vb.customize ['modifyvm', :id, '--cableconnected1', 'on']
+      
+          # change the network card hardware for better performance
+          vb.customize ["modifyvm", :id, "--nictype1", "virtio" ]
+          vb.customize ["modifyvm", :id, "--nictype2", "virtio" ]
+      
+          # suggested fix for slow network performance
+          # see https://github.com/mitchellh/vagrant/issues/1807
+          vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+          vb.customize ["modifyvm", :id, "--natdnsproxy1", "on"]
+        end
+
+  - name: Bring up the Vagrant VM.
+    shell: vagrant up
+    become: true
+    args:
+      chdir: '{{ remote_dir }}'
+  
+   
